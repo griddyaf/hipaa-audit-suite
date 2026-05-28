@@ -1,0 +1,4 @@
+{"Records": [
+  {"eventTime": "2026-05-28T10:00:00Z", "eventName": "GetObject", "eventSource": "s3.amazonaws.com", "userIdentity": {"userName": "alice"}},
+  {"eventTime": "2026-05-28T10:05:00Z", "eventName": "GetObject", "eventSource": "s3.amazonaws.com", "userIdentity": {}}
+]}

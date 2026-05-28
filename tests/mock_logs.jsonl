@@ -1,0 +1,2 @@
+{"timestamp": "2026-05-28T10:00:00Z", "user_id": "usr_1", "action": "READ", "resource": "rec_1"}
+{"timestamp": "2026-05-28T10:01:00Z", "user_id": "anonymous", "action": "READ", "resource": "rec_2"}

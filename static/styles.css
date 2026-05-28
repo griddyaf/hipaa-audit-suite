@@ -252,6 +252,7 @@ tr:hover td {
 .status-PASS { background: rgba(16, 185, 129, 0.2); color: var(--pass-color); }
 .status-FAIL { background: rgba(239, 68, 68, 0.2); color: var(--fail-color); }
 .status-ERROR { background: rgba(245, 158, 11, 0.2); color: var(--error-color); }
+.status-WARN { background: rgba(245, 158, 11, 0.2); color: var(--error-color); }
 
 @keyframes fadeIn {
     from { opacity: 0; }
@@ -261,3 +262,5 @@ tr:hover td {
 @keyframes slideUp {
     to { opacity: 1; transform: translateY(0); }
 }
+
+.ref-sub { font-size: 0.8em; opacity: 0.75; }

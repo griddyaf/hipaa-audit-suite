@@ -1,66 +1,132 @@
+"""Audit-controls log monitor.
+
+Ingests real log formats and verifies HIPAA audit-control requirements:
+each access to ePHI must be attributable to a unique user and time-stamped.
+
+Supported formats (auto-detected):
+  * json    – a JSON array of event objects (original demo format).
+  * jsonl   – newline-delimited JSON objects.
+  * cloudtrail – AWS CloudTrail export ({"Records": [...]}); normalized.
+  * syslog  – RFC3164-ish text lines; best-effort field extraction.
+"""
 import json
 import os
+import re
+
+from hipaa_refs import make_finding, PASS, FAIL, WARN, ERROR
+
+_REQUIRED = ("timestamp", "user_id", "action")
+_ANON = {"anonymous", "guest", "", None}
+_SYSLOG_RE = re.compile(
+    r"^(?P<timestamp>\w{3}\s+\d+\s[\d:]+)\s+\S+\s+(?P<action>\w+).*?"
+    r"(user|uid)=(?P<user_id>\S+)", re.IGNORECASE)
+
 
 class AuditLogMonitor:
-    def __init__(self, log_path):
+    def __init__(self, log_path="mock_data/sample_logs.json", fmt="auto"):
         self.log_path = log_path
+        self.fmt = fmt
         self.findings = []
 
+    # ------------------------------------------------------------------ #
     def run_audit(self):
-        """Parses logs to verify audit controls are in place."""
         if not os.path.exists(self.log_path):
-            self.findings.append({
-                "status": "ERROR",
-                "component": "Log Monitor",
-                "finding": f"Log file not found at {self.log_path}"
-            })
+            self.findings.append(make_finding(
+                ERROR, "Log Monitor", f"Log file not found at {self.log_path}", "config_error"))
             return self.findings
-
         try:
-            with open(self.log_path, 'r') as f:
-                logs = json.load(f)
-        except json.JSONDecodeError:
-            self.findings.append({
-                "status": "ERROR",
-                "component": "Log Monitor",
-                "finding": "Invalid JSON in log file"
-            })
+            events = self._load_events()
+        except ValueError as exc:
+            self.findings.append(make_finding(
+                ERROR, "Log Monitor", str(exc), "config_error"))
             return self.findings
 
-        for i, log_entry in enumerate(logs):
-            # Check for required fields
-            missing_fields = []
-            for field in ["timestamp", "user_id", "action"]:
-                if field not in log_entry:
-                    missing_fields.append(field)
+        if not events:
+            self.findings.append(make_finding(
+                WARN, "Log Monitor", "No log entries parsed from file.", "audit_controls"))
+            return self.findings
 
-            if missing_fields:
-                self.findings.append({
-                    "status": "FAIL",
-                    "component": f"Log Monitor - Entry {i}",
-                    "finding": f"Missing required audit fields: {', '.join(missing_fields)}"
-                })
+        had_fail = False
+        for i, entry in enumerate(events):
+            missing = [f for f in _REQUIRED if not entry.get(f)]
+            if missing:
+                had_fail = True
+                self.findings.append(make_finding(
+                    FAIL, f"Log Monitor - Entry {i}",
+                    f"Missing required audit fields: {', '.join(missing)}.",
+                    "audit_controls"))
                 continue
+            if entry.get("user_id") in _ANON:
+                had_fail = True
+                self.findings.append(make_finding(
+                    FAIL, f"Log Monitor - Entry {i}",
+                    f"Unauthenticated/anonymous access to "
+                    f"{entry.get('resource', 'unknown resource')} (action {entry.get('action')}).",
+                    "unique_user_id"))
 
-            # Check for unauthenticated access
-            if log_entry.get("user_id") in ["anonymous", "guest", "", None]:
-                self.findings.append({
-                    "status": "FAIL",
-                    "component": f"Log Monitor - Entry {i}",
-                    "finding": f"Unauthenticated access detected for action {log_entry.get('action')} on {log_entry.get('resource')}."
-                })
-            else:
-                pass # This entry is compliant. To reduce noise, we don't log PASS for every line.
-
-        if not any(f['status'] == 'FAIL' for f in self.findings):
-             self.findings.append({
-                 "status": "PASS",
-                 "component": "Log Monitor",
-                 "finding": "All sampled log entries meet HIPAA audit control requirements."
-             })
-
+        if not had_fail:
+            self.findings.append(make_finding(
+                PASS, "Log Monitor",
+                f"All {len(events)} parsed entries meet audit-control requirements.",
+                "audit_controls"))
         return self.findings
 
+    # ------------------------------ load ------------------------------ #
+    def _detect_fmt(self, text):
+        if self.fmt != "auto":
+            return self.fmt
+        ext = os.path.splitext(self.log_path)[1].lower()
+        if ext == ".jsonl":
+            return "jsonl"
+        if ext in (".log", ".txt"):
+            return "syslog"
+        stripped = text.lstrip()
+        if stripped.startswith("{") and '"Records"' in stripped[:200]:
+            return "cloudtrail"
+        if stripped.startswith("["):
+            return "json"
+        if stripped.startswith("{"):
+            return "jsonl"
+        return "syslog"
+
+    def _load_events(self):
+        with open(self.log_path) as f:
+            text = f.read()
+        fmt = self._detect_fmt(text)
+        if fmt == "json":
+            data = json.loads(text)
+            return data if isinstance(data, list) else [data]
+        if fmt == "cloudtrail":
+            recs = json.loads(text).get("Records", [])
+            return [self._normalize_cloudtrail(r) for r in recs]
+        if fmt == "jsonl":
+            out = []
+            for line in text.splitlines():
+                line = line.strip()
+                if line:
+                    out.append(json.loads(line))
+            return out
+        if fmt == "syslog":
+            return [self._parse_syslog(l) for l in text.splitlines() if l.strip()]
+        raise ValueError(f"Unsupported log format: {fmt}")
+
+    @staticmethod
+    def _normalize_cloudtrail(rec):
+        ident = rec.get("userIdentity", {})
+        return {
+            "timestamp": rec.get("eventTime"),
+            "user_id": ident.get("userName") or ident.get("arn") or ident.get("principalId"),
+            "action": rec.get("eventName"),
+            "resource": rec.get("eventSource"),
+        }
+
+    @staticmethod
+    def _parse_syslog(line):
+        m = _SYSLOG_RE.search(line)
+        if not m:
+            return {"raw": line}  # missing fields -> will be flagged
+        return m.groupdict()
+
+
 if __name__ == "__main__":
-    monitor = AuditLogMonitor("../mock_data/sample_logs.json")
-    print(monitor.run_audit())
+    print(AuditLogMonitor("../mock_data/sample_logs.json").run_audit())

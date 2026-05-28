@@ -59,13 +59,14 @@ function renderResults(findings, reportUrl) {
     findings.forEach(f => {
         if (f.status === 'PASS') passCount++;
         else if (f.status === 'FAIL') failCount++;
-        else errorCount++;
+        else if (f.status !== 'WARN') errorCount++;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
             <td><span class="status-badge status-${f.status}">${f.status}</span></td>
             <td><strong>${f.component}</strong></td>
             <td>${f.finding}</td>
+            <td>${f.citation ? `<strong>${f.citation}</strong><br><span class="ref-sub">${f.safeguard || ''}</span>` : ''}</td>
         `;
         tbody.appendChild(tr);
     });

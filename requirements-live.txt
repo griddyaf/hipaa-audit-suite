@@ -1,0 +1,9 @@
+# Optional drivers for live backends. Install only the ones you need:
+#   pip install -r requirements-live.txt
+# PostgreSQL live checks
+psycopg2-binary==2.9.9
+# MongoDB live checks
+pymongo==4.7.2
+# GCP IAM live checks
+google-cloud-resource-manager==1.12.5
+google-auth==2.29.0
