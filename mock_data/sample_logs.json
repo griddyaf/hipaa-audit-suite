@@ -1,0 +1,29 @@
+[
+    {
+        "timestamp": "2026-05-28T10:00:00Z",
+        "user_id": "usr_12345",
+        "action": "READ",
+        "resource": "patient_record_789",
+        "status": "SUCCESS"
+    },
+    {
+        "timestamp": "2026-05-28T10:05:00Z",
+        "user_id": "anonymous",
+        "action": "READ",
+        "resource": "patient_record_789",
+        "status": "SUCCESS"
+    },
+    {
+        "timestamp": "2026-05-28T10:10:00Z",
+        "user_id": "usr_99999",
+        "action": "WRITE",
+        "resource": "prescription_444",
+        "status": "SUCCESS"
+    },
+    {
+        "timestamp": "2026-05-28T10:15:00Z",
+        "action": "DELETE",
+        "resource": "patient_record_789",
+        "status": "SUCCESS"
+    }
+]

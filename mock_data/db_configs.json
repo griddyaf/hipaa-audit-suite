@@ -1,0 +1,15 @@
+{
+    "postgresql": {
+        "host": "localhost",
+        "port": 5432,
+        "database": "health_records",
+        "encryption_at_rest": true,
+        "ssl_mode": "require"
+    },
+    "mongodb": {
+        "host": "localhost",
+        "port": 27017,
+        "database": "patient_data",
+        "encryption_at_rest": false
+    }
+}

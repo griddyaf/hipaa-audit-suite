@@ -1,0 +1,16 @@
+{
+    "roles": {
+        "admin": {
+            "permissions": ["read_all", "write_all", "delete_all", "manage_users"]
+        },
+        "doctor": {
+            "permissions": ["read_patient", "write_patient"]
+        },
+        "nurse": {
+            "permissions": ["read_patient", "write_vitals", "manage_users"]
+        },
+        "patient": {
+            "permissions": ["read_own", "write_all"]
+        }
+    }
+}
