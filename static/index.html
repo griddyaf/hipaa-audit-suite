@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HIPAA Compliance Suite</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background-mesh"></div>
+    
+    <main class="container">
+        <header>
+            <h1>HIPAA Audit Dashboard</h1>
+            <p>Defensive configuration and compliance monitoring</p>
+        </header>
+
+        <section class="glass-panel config-section">
+            <h2>Audit Parameters</h2>
+            <form id="auditForm">
+                <div class="form-group">
+                    <label for="target_url">Target URL (Data in Transit)</label>
+                    <input type="url" id="target_url" value="https://localhost" required>
+                </div>
+                <div class="form-group">
+                    <label for="db_config">Database Config Path</label>
+                    <input type="text" id="db_config" value="mock_data/db_configs.json" required>
+                </div>
+                <div class="form-group">
+                    <label for="log_file">Access Log Path</label>
+                    <input type="text" id="log_file" value="mock_data/sample_logs.json" required>
+                </div>
+                <div class="form-group">
+                    <label for="iam_config">IAM Role Config Path</label>
+                    <input type="text" id="iam_config" value="mock_data/sample_iam.json" required>
+                </div>
+                <button type="submit" id="runBtn" class="btn-primary">
+                    <span id="btnText">Run Audit</span>
+                    <div class="spinner" id="spinner" style="display: none;"></div>
+                </button>
+            </form>
+        </section>
+
+        <section id="resultsSection" class="glass-panel results-section" style="display: none;">
+            <div class="results-header">
+                <h2>Audit Findings</h2>
+                <a id="downloadBtn" href="#" class="btn-secondary" style="display: none;">Download PDF Report</a>
+            </div>
+            
+            <div class="summary-cards">
+                <div class="card pass">
+                    <h3>Passed</h3>
+                    <span id="passCount">0</span>
+                </div>
+                <div class="card fail">
+                    <h3>Failed</h3>
+                    <span id="failCount">0</span>
+                </div>
+                <div class="card error">
+                    <h3>Errors</h3>
+                    <span id="errorCount">0</span>
+                </div>
+            </div>
+
+            <div class="table-container">
+                <table id="findingsTable">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Component</th>
+                            <th>Finding Details</th>
+                        </tr>
+                    </thead>
+                    <tbody id="findingsBody">
+                        <!-- Rows injected via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
