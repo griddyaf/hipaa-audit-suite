@@ -3,7 +3,7 @@
 # PostgreSQL live checks
 psycopg2-binary==2.9.9
 # MySQL / Cloud SQL live checks
-PyMySQL==1.1.1
+PyMySQL==1.2.0
 # MongoDB live checks
 pymongo==4.7.2
 # GCP IAM + Storage live checks
