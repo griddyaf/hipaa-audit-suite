@@ -13,7 +13,7 @@ import json
 import os
 import re
 
-from hipaa_refs import make_finding, PASS, FAIL, WARN, ERROR
+from hipaa_refs import ERROR, FAIL, PASS, WARN, make_finding
 
 _REQUIRED = ("timestamp", "user_id", "action")
 _ANON = {"anonymous", "guest", "", None}
@@ -112,7 +112,7 @@ class AuditLogMonitor:
                     out.append(json.loads(line))
             return out
         if fmt == "syslog":
-            return [self._parse_syslog(l) for l in text.splitlines() if l.strip()]
+            return [self._parse_syslog(ln) for ln in text.splitlines() if ln.strip()]
         raise ValueError(f"Unsupported log format: {fmt}")
 
     @staticmethod

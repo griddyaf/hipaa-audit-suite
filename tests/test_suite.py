@@ -144,7 +144,7 @@ def tls12_server():
         while not stop.is_set():
             try:
                 conn, _ = srv.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             try:
                 with ctx.wrap_socket(conn, server_side=True) as s:
@@ -215,3 +215,81 @@ def test_mysql_mock_mode_pass():
     findings = DataAtRestAuditor(os.path.join(MOCK, "db_configs.json")).run_audit()
     by = {f["component"]: f["status"] for f in findings}
     assert by["Database: MySQL"] == "PASS"
+
+
+# ===================== OSS integrations + deep checks ================= #
+from auditors.data_in_transit import classify_ciphers, evaluate_cert_expiry
+from config_checks.gcp_audit_config import evaluate_audit_config
+from config_checks.gcs_check import evaluate_bucket
+from integrations.prowler_ingest import normalize_prowler_findings
+from outputs import compliance_summary, to_sarif, write_json, write_sarif
+
+
+def test_compliance_summary_and_score():
+    fs = [make_finding("PASS", "a", "x", "audit_controls"),
+          make_finding("FAIL", "b", "y", "encryption_at_rest"),
+          make_finding("WARN", "c", "z", "integrity")]
+    s = compliance_summary(fs)
+    assert s["counts"]["FAIL"] == 1 and s["total"] == 3
+    assert s["pass_rate"] == 50.0
+    assert 0 <= s["posture_score"] <= 100
+
+
+def test_sarif_structure_and_roundtrip(tmp_path):
+    fs = [make_finding("FAIL", "DB", "bad", "encryption_at_rest")]
+    sarif = to_sarif(fs)
+    assert sarif["version"] == "2.1.0"
+    run = sarif["runs"][0]
+    assert run["results"][0]["level"] == "error"
+    assert run["tool"]["driver"]["rules"]
+    jp, sp = tmp_path / "f.json", tmp_path / "f.sarif"
+    write_json(fs, str(jp))
+    write_sarif(fs, str(sp))
+    assert json.load(open(jp))["summary"]["total"] == 1
+    assert json.load(open(sp))["version"] == "2.1.0"
+
+
+def test_prowler_normalize_v3_and_v4():
+    v3 = [{"Status": "FAIL", "CheckTitle": "Public IP", "Severity": "high",
+           "ServiceName": "cloudsql", "ResourceId": "i1", "StatusExtended": "exposed"}]
+    v4 = [{"status_code": "PASS", "severity": "Medium", "service_name": "storage",
+           "finding_info": {"title": "UBLA on"}, "resources": [{"name": "gs://b"}]}]
+    out = normalize_prowler_findings(v3) + normalize_prowler_findings(v4)
+    assert out[0]["status"] == "FAIL" and out[0]["severity"] == "high"
+    assert "cloudsql" in out[0]["component"]
+    assert out[1]["status"] == "PASS"
+
+
+def test_cert_expiry_eval():
+    import time
+    now = time.time()
+    assert evaluate_cert_expiry(now - 86400, now)[0] == "FAIL"     # expired
+    assert evaluate_cert_expiry(now + 10 * 86400, now)[0] == "WARN"  # soon
+    assert evaluate_cert_expiry(now + 200 * 86400, now)[0] == "PASS"
+    assert evaluate_cert_expiry(None, now)[0] == "WARN"
+
+
+def test_classify_ciphers():
+    weak = classify_ciphers(["ECDHE-RSA-RC4-SHA", "TLS_AES_256_GCM_SHA384", "DES-CBC3-SHA"])
+    assert "ECDHE-RSA-RC4-SHA" in weak and "DES-CBC3-SHA" in weak
+    assert "TLS_AES_256_GCM_SHA384" not in weak
+
+
+def test_evaluate_bucket_public_and_retention():
+    public = evaluate_bucket({"name": "phi", "public": True, "retention_period_seconds": 1000})
+    assert any(f["status"] == "FAIL" and f["severity"] == "critical" for f in public)
+    assert any(f["status"] == "FAIL" and "6 years" in f["finding"] for f in public)
+    good = evaluate_bucket({
+        "name": "ok", "public": False, "public_access_prevention": "enforced",
+        "uniform_bucket_level_access": True, "versioning_enabled": True,
+        "retention_period_seconds": 7 * 365 * 86400, "default_kms_key": "k"})
+    assert all(f["status"] == "PASS" for f in good)
+
+
+def test_evaluate_audit_config():
+    missing = evaluate_audit_config([{"service": "allServices",
+                                      "auditLogConfigs": [{"logType": "DATA_READ"}]}])
+    assert missing[0]["status"] == "FAIL" and "DATA_WRITE" in missing[0]["finding"]
+    full = evaluate_audit_config([{"service": "allServices", "auditLogConfigs": [
+        {"logType": "DATA_READ"}, {"logType": "DATA_WRITE"}]}])
+    assert full[0]["status"] == "PASS"

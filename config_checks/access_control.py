@@ -10,7 +10,7 @@ The google-cloud client is imported lazily so file mode needs no GCP deps.
 import json
 import os
 
-from hipaa_refs import make_finding, PASS, FAIL, WARN, ERROR
+from hipaa_refs import ERROR, FAIL, PASS, make_finding
 
 # Basic/primitive GCP roles that grant broad, non-minimal access.
 _BROAD_GCP_ROLES = {"roles/owner", "roles/editor"}

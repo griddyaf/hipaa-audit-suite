@@ -14,7 +14,7 @@ import ssl
 import warnings
 from urllib.parse import urlparse
 
-from hipaa_refs import make_finding, PASS, FAIL, WARN, ERROR
+from hipaa_refs import ERROR, FAIL, PASS, WARN, make_finding
 
 # Protocol versions we probe, newest first. Availability depends on the local
 # OpenSSL build; unsupported ones are reported as "could not test".
@@ -35,6 +35,31 @@ def detect_cloudflare(headers):
     if "cf-ray" in lowered or "cf-cache-status" in lowered:
         return True
     return "cloudflare" in lowered.get("server", "")
+
+
+_WEAK_CIPHER_TOKENS = ("RC4", "3DES", "DES-", "_DES_", "NULL", "EXPORT", "MD5", "ANON", "ADH", "AECDH")
+
+
+def classify_ciphers(cipher_names):
+    """Pure: return the subset of cipher names that are cryptographically weak."""
+    weak = []
+    for name in cipher_names or []:
+        upper = str(name).upper()
+        if any(tok in upper for tok in _WEAK_CIPHER_TOKENS):
+            weak.append(name)
+    return weak
+
+
+def evaluate_cert_expiry(not_after_epoch, now_epoch, warn_days=30):
+    """Pure: classify a certificate's expiry. Returns (status, message)."""
+    if not_after_epoch is None:
+        return "WARN", "Could not read certificate expiry."
+    remaining_days = (not_after_epoch - now_epoch) / 86400.0
+    if remaining_days < 0:
+        return "FAIL", f"TLS certificate EXPIRED {abs(int(remaining_days))} day(s) ago."
+    if remaining_days <= warn_days:
+        return "WARN", f"TLS certificate expires in {int(remaining_days)} day(s); renew soon."
+    return "PASS", f"TLS certificate valid for {int(remaining_days)} more day(s)."
 
 
 class DataInTransitAuditor:
@@ -83,6 +108,24 @@ class DataInTransitAuditor:
             return headers
         except Exception:  # noqa: BLE001
             return {}
+
+    def _cert_not_after(self, host, port):
+        """Return the certificate notAfter as a unix epoch, or None."""
+        try:
+            from cryptography import x509  # lazy
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            with socket.create_connection((host, port), timeout=self.timeout) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as ss:
+                    der = ss.getpeercert(binary_form=True)
+            cert = x509.load_der_x509_certificate(der)
+            try:
+                return cert.not_valid_after_utc.timestamp()
+            except AttributeError:  # older cryptography
+                return cert.not_valid_after.timestamp()
+        except Exception:  # noqa: BLE001
+            return None
 
     def run_audit(self):
         host, port = self._resolve()
@@ -135,6 +178,17 @@ class DataInTransitAuditor:
             self.findings.append(make_finding(
                 PASS, f"Endpoint: {host}",
                 "No deprecated TLS protocols accepted.", "transmission_security"))
+
+        weak_ciphers = classify_ciphers([c for _, c in supported])
+        if weak_ciphers:
+            self.findings.append(make_finding(
+                FAIL, f"Endpoint: {host}",
+                f"Weak cipher(s) negotiated: {', '.join(sorted(set(weak_ciphers)))}.",
+                "encryption_in_transit"))
+
+        import time as _time
+        status, msg = evaluate_cert_expiry(self._cert_not_after(host, port), _time.time())
+        self.findings.append(make_finding(status, f"Endpoint: {host}", msg, "transmission_security"))
 
         if detect_cloudflare(self._fetch_headers(host, port)):
             self.findings.append(make_finding(

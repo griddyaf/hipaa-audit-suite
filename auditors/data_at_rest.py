@@ -11,7 +11,7 @@ mode without them installed.
 import json
 import os
 
-from hipaa_refs import make_finding, PASS, FAIL, WARN, ERROR
+from hipaa_refs import ERROR, FAIL, PASS, WARN, make_finding
 
 
 def evaluate_mysql_tls(variables, status, label="Database: MySQL"):

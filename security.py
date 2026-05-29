@@ -38,7 +38,7 @@ def validate_target_url(url, allow_private=False):
     try:
         infos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise ValidationError(f"could not resolve host: {exc}")
+        raise ValidationError(f"could not resolve host: {exc}") from exc
 
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])

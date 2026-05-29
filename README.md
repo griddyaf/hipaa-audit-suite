@@ -1,5 +1,7 @@
 # HIPAA Security Rule Audit & Configuration Monitoring Suite
 
+![CI](https://github.com/griddyaf/hipaa-audit-suite/actions/workflows/ci.yml/badge.svg) ![Security](https://github.com/griddyaf/hipaa-audit-suite/actions/workflows/security.yml/badge.svg) ![CodeQL](https://github.com/griddyaf/hipaa-audit-suite/actions/workflows/codeql.yml/badge.svg)
+
 A defensive compliance verification tool that automates checking of technical
 safeguards required under the HIPAA Security Rule (45 CFR Part 164, Subpart C).
 It audits database encryption, TLS transmission security, audit-control logging,
@@ -115,6 +117,55 @@ HTTPS, and HSTS.
 
 ```bash
 python audit_runner.py --log-file audit_logs.json --log-format gcp_audit --skip-tls
+```
+
+## Machine-readable output & scoring
+
+Alongside the PDF, emit JSON (dashboards/diffing) and SARIF 2.1.0 (GitHub
+code-scanning):
+
+```bash
+python audit_runner.py --skip-tls --no-pdf --json-out findings.json --sarif-out findings.sarif
+```
+
+Each run prints a pass rate and a severity-weighted posture score.
+
+## Extended cloud posture (optional)
+
+```bash
+# Wrap Prowler's GCP results (Cloud SQL / GCS / KMS / IAM) into the report
+python audit_runner.py --prowler-file prowler-output.ocsf.json --skip-tls --no-pdf
+python audit_runner.py --run-prowler --gcp-project my-project --skip-tls   # runs prowler CLI
+
+# Audit GCS buckets (public access, UBLA, PAP, versioning, retention, CMEK)
+python audit_runner.py --gcs --gcp-project my-project --skip-tls --no-pdf
+
+# Verify GCP Data Access audit logging is enabled
+python audit_runner.py --check-audit-logging --gcp-project my-project --skip-tls --no-pdf
+
+# Append manual-review reminders (automatic logoff, backup/contingency)
+python audit_runner.py --manual-checklist --skip-tls --no-pdf
+```
+
+Deep TLS: the in-transit scanner now also flags weak negotiated ciphers
+(RC4/3DES/etc.) and certificate expiry, in addition to protocol enumeration.
+
+## CI / security automation
+
+GitHub Actions in `.github/workflows/`:
+
+- **ci.yml** — ruff lint + pytest across Python 3.10/3.11/3.12.
+- **codeql.yml** — CodeQL security-and-quality analysis.
+- **security.yml** — Bandit SAST (SARIF to code scanning), pip-audit dependency
+  scan, gitleaks secret scan, and a mock run of the suite itself (SARIF + JSON
+  artifacts).
+- **dependabot.yml** — weekly pip + github-actions updates.
+
+Local equivalents:
+
+```bash
+pip install -e ".[dev]"
+ruff check . && pytest -q && bandit -r . -c pyproject.toml && pip-audit -r requirements.txt
 ```
 
 ## Tests

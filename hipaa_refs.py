@@ -35,6 +35,22 @@ CITATIONS = {
         "45 CFR §164.308(a)(4)",
         "Information Access Management – authorize access consistent with minimum necessary",
     ),
+    "integrity": (
+        "45 CFR §164.312(c)(1)",
+        "Integrity – protect ePHI from improper alteration or destruction",
+    ),
+    "automatic_logoff": (
+        "45 CFR §164.312(a)(2)(iii)",
+        "Automatic Logoff (addressable) – terminate sessions after inactivity",
+    ),
+    "contingency_backup": (
+        "45 CFR §164.308(a)(7)(ii)(A)",
+        "Data Backup Plan (required) – retrievable exact copies of ePHI",
+    ),
+    "documentation_retention": (
+        "45 CFR §164.316(b)(2)(i)",
+        "Retention – retain required documentation for six years",
+    ),
     "config_error": (
         "45 CFR §164.308(a)(1)(ii)(A)",
         "Risk Analysis – unable to assess; remediate data/access gap",
@@ -42,7 +58,7 @@ CITATIONS = {
 }
 
 # Valid statuses
-PASS = "PASS"
+PASS = "PASS"  # noqa: S105 (status label, not a secret)
 FAIL = "FAIL"
 WARN = "WARN"
 ERROR = "ERROR"

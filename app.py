@@ -7,8 +7,8 @@ from flask import Flask, jsonify, request, send_file
 
 from auditors.data_at_rest import DataAtRestAuditor
 from auditors.data_in_transit import DataInTransitAuditor
-from config_checks.access_control import AccessControlAuditor
 from compliance_reports.report_generator import ReportGenerator
+from config_checks.access_control import AccessControlAuditor
 from log_monitors.audit_logger import AuditLogMonitor
 from security import ValidationError, validate_config_path, validate_target_url
 
@@ -55,7 +55,7 @@ def run_audit():
         findings += AccessControlAuditor(iam_config).run_audit()
     except ValidationError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return jsonify({"status": "error", "message": "internal error during audit"}), 500
 
     report_id = uuid.uuid4().hex

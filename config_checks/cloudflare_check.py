@@ -17,7 +17,7 @@ import os
 import urllib.error
 import urllib.request
 
-from hipaa_refs import make_finding, PASS, FAIL, WARN, ERROR
+from hipaa_refs import ERROR, FAIL, PASS, WARN, make_finding
 
 _API = "https://api.cloudflare.com/client/v4"
 _TLS_RANK = {"1.0": 0, "1.1": 1, "1.2": 2, "1.3": 3}
@@ -87,11 +87,11 @@ class CloudflareAuditor:
 
     def _get_setting(self, name):
         url = f"{_API}/zones/{self.zone_id}/settings/{name}"
-        req = urllib.request.Request(url, headers={
+        req = urllib.request.Request(url, headers={  # noqa: S310 (fixed https host)
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json",
         })
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
             data = json.loads(resp.read().decode())
         if not data.get("success", False):
             raise RuntimeError(data.get("errors") or "Cloudflare API error")

@@ -7,8 +7,8 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from auditors.data_at_rest import DataAtRestAuditor
 from auditors.data_in_transit import DataInTransitAuditor
-from config_checks.access_control import AccessControlAuditor
 from compliance_reports.report_generator import ReportGenerator
+from config_checks.access_control import AccessControlAuditor
 from log_monitors.audit_logger import AuditLogMonitor
 
 
@@ -35,8 +35,22 @@ def build_parser():
                    help="GCP project ID (required when --iam-mode gcp).")
     p.add_argument("--cloudflare-zone", default=None,
                    help="Cloudflare zone ID to audit (token via CLOUDFLARE_API_TOKEN env).")
+    p.add_argument("--prowler-file", default=None,
+                   help="Ingest an existing Prowler JSON/OCSF results file.")
+    p.add_argument("--run-prowler", action="store_true",
+                   help="Run the prowler CLI live (requires prowler installed + GCP creds).")
+    p.add_argument("--gcs", action="store_true",
+                   help="Audit GCS buckets (requires google-cloud-storage + --gcp-project).")
+    p.add_argument("--check-audit-logging", action="store_true",
+                   help="Verify GCP Data Access audit logging is enabled (needs --gcp-project).")
+    p.add_argument("--manual-checklist", action="store_true",
+                   help="Append reminders for safeguards requiring human verification.")
     p.add_argument("--output", default="HIPAA_Compliance_Report.pdf",
                    help="Output path for the generated PDF report.")
+    p.add_argument("--json-out", default=None, help="Also write findings as JSON.")
+    p.add_argument("--sarif-out", default=None,
+                   help="Also write findings as SARIF 2.1.0 (for GitHub code-scanning).")
+    p.add_argument("--no-pdf", action="store_true", help="Skip PDF generation.")
     p.add_argument("--skip-tls", action="store_true", help="Skip the TLS scan.")
     return p
 
@@ -62,16 +76,62 @@ def run_all(args):
         print("[*] Cloudflare zone settings...")
         from config_checks.cloudflare_check import CloudflareAuditor
         findings += CloudflareAuditor(args.cloudflare_zone).run_audit()
+
+    if args.gcs:
+        print("[*] GCS buckets...")
+        from config_checks.gcs_check import GCSAuditor
+        findings += GCSAuditor(project_id=args.gcp_project).run_audit()
+
+    if args.check_audit_logging:
+        print("[*] GCP audit logging config...")
+        from config_checks.gcp_audit_config import GCPAuditLoggingAuditor
+        findings += GCPAuditLoggingAuditor(project_id=args.gcp_project).run_audit()
+
+    if args.prowler_file or args.run_prowler:
+        print("[*] Prowler findings...")
+        from integrations.prowler_ingest import ProwlerAuditor
+        findings += ProwlerAuditor(
+            provider="gcp", project=args.gcp_project,
+            results_file=args.prowler_file, run=args.run_prowler).run_audit()
+
+    if args.manual_checklist:
+        findings += manual_checklist()
     return findings
+
+
+def manual_checklist():
+    """Safeguards that require human verification, surfaced as reminders."""
+    from hipaa_refs import make_finding
+    return [
+        make_finding("WARN", "Manual Review",
+                     "Confirm automatic logoff / session timeout is configured on systems with ePHI.",
+                     "automatic_logoff"),
+        make_finding("WARN", "Manual Review",
+                     "Confirm a tested data backup & disaster-recovery plan exists for ePHI.",
+                     "contingency_backup"),
+    ]
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
     print("Starting HIPAA Security Rule Audit...")
     findings = run_all(args)
-    print(f"[*] Generating report at {args.output}...")
-    ReportGenerator(findings, args.output).generate_report()
-    print("Audit complete.")
+    if not args.no_pdf:
+        print(f"[*] Generating report at {args.output}...")
+        ReportGenerator(findings, args.output).generate_report()
+    if args.json_out:
+        from outputs import write_json
+        write_json(findings, args.json_out)
+        print(f"[*] Wrote JSON to {args.json_out}")
+    if args.sarif_out:
+        from outputs import write_sarif
+        write_sarif(findings, args.sarif_out)
+        print(f"[*] Wrote SARIF to {args.sarif_out}")
+    from outputs import compliance_summary
+    s = compliance_summary(findings)
+    print(f"Audit complete. Pass rate: {s['pass_rate']}% | "
+          f"posture score: {s['posture_score']} | "
+          f"FAIL={s['counts']['FAIL']} WARN={s['counts']['WARN']} ERROR={s['counts']['ERROR']}")
     return findings
 
 
