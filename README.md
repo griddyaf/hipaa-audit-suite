@@ -170,6 +170,17 @@ python audit_runner.py --npm-audit-dir ./member-app --skip-tls --no-pdf       # 
 python audit_runner.py --audit-write-scan ./member-app/src --skip-tls --no-pdf
 ```
 
+# Tier-2 source SAST: SQLi / SSRF / upload safety / CSRF coverage / MFA posture
+python audit_runner.py --sast-scan ./member-app --skip-tls --no-pdf
+```
+
+These are heuristic *review indicators*: direct SQL interpolation and plaintext
+MFA secrets are flagged as failures; dynamic SQL, server-side fetch of non-literal
+URLs, unsanitized upload keys, and mutating routes outside CSRF-protected prefixes
+are flagged for review.
+
+```bash
+
 IDOR config shape:
 
 ```json

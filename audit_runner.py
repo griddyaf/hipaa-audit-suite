@@ -55,6 +55,8 @@ def build_parser():
                    help="Run `npm audit` live in this Node project directory.")
     p.add_argument("--audit-write-scan", default=None,
                    help="Static scan of a source dir for swallowed audit-log writes (SAST).")
+    p.add_argument("--sast-scan", default=None,
+                   help="Tier-2 source SAST (SQLi/SSRF/upload/CSRF/MFA) over a source dir.")
     p.add_argument("--output", default="HIPAA_Compliance_Report.pdf",
                    help="Output path for the generated PDF report.")
     p.add_argument("--json-out", default=None, help="Also write findings as JSON.")
@@ -126,6 +128,11 @@ def run_all(args):
         print("[*] Audit-write reliability scan...")
         from config_checks.audit_write_scan import AuditWriteScanner
         findings += AuditWriteScanner(args.audit_write_scan).run_audit()
+
+    if args.sast_scan:
+        print("[*] Tier-2 SAST scan...")
+        from config_checks.sast_scans import SASTScanner
+        findings += SASTScanner(args.sast_scan).run_audit()
 
     if args.manual_checklist:
         findings += manual_checklist()

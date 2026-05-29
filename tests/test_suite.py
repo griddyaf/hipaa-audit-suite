@@ -344,3 +344,56 @@ def test_audit_write_scan_detects_swallowed():
     assert any(f["status"] == "FAIL" for f in res)
     clean = {"ok.ts": "const x = something().catch(() => {});  // not audit\n"}
     assert scan_audit_writes(clean)[0]["status"] == "PASS"
+
+
+# ============================ Tier-2 SAST ============================= #
+from config_checks.sast_scans import (
+    scan_csrf_coverage,
+    scan_mfa_posture,
+    scan_sqli,
+    scan_ssrf,
+    scan_upload_safety,
+)
+
+
+def test_sqli_direct_and_dynamic():
+    direct = {"q.ts": "await db.query(`SELECT * FROM t WHERE id = ${userId}`);\n"}
+    r = scan_sqli(direct)
+    assert any(f["status"] == "FAIL" for f in r)
+    safe = {"q.ts": "await db.query('SELECT * FROM t WHERE id = $1', [userId]);\n"}
+    assert not any(f["status"] == "FAIL" for f in scan_sqli(safe))
+
+
+def test_ssrf_server_fetch_without_guard():
+    bad = {"src/app/api/fax/route.ts": "const mediaUrl = body.media_url;\nawait fetch(mediaUrl);\n"}
+    assert any(f["status"] == "WARN" for f in scan_ssrf(bad))
+    guarded = {"src/lib/fax.ts": "if (isPrivate(u)) throw new Error();\nawait fetch(u);\n"}
+    assert not scan_ssrf(guarded)
+    client = {"src/components/X.tsx": "await fetch(u);\n"}  # client component, not SSRF
+    assert not scan_ssrf(client)
+
+
+def test_upload_safety():
+    bad = {"src/app/api/labs/route.ts":
+           "const key = `patients/${filename}`;\nbucket.file(key).save(b);\n"}
+    assert any(f["status"] == "WARN" for f in scan_upload_safety(bad))
+    sanitized = {"src/app/api/labs/route.ts":
+                 "const key = `patients/${sanitize(filename)}`;\n"}
+    assert not scan_upload_safety(sanitized)
+
+
+def test_csrf_coverage():
+    uncovered = {"src/app/api/comms/route.ts": "export async function POST(req) { return ok(); }\n"}
+    assert any(f["status"] == "WARN" for f in scan_csrf_coverage(uncovered))
+    portal = {"src/app/api/portal/x/route.ts": "export const POST = async () => ok();\n"}
+    assert not scan_csrf_coverage(portal)
+    marked = {"src/app/api/profile/route.ts":
+              "import { assertSameOrigin } from '@/csrf';\nexport async function POST(){}\n"}
+    assert not scan_csrf_coverage(marked)
+
+
+def test_mfa_posture():
+    plain = {"migrations/001.sql": "ALTER TABLE users ADD COLUMN mfa_secret VARCHAR(32);\n"}
+    assert any(f["status"] == "FAIL" for f in scan_mfa_posture(plain))
+    no_replay = {"src/lib/mfa/verify.ts": "export function verifyTOTP(code){ return totp.check(code); }\n"}
+    assert any("replay" in f["finding"].lower() for f in scan_mfa_posture(no_replay))
