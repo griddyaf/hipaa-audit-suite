@@ -1,0 +1,4 @@
+{"vulnerabilities": {
+  "lodash": {"severity": "high", "range": "<4.17.21", "via": [{"title":"Prototype Pollution"}]},
+  "minimist": {"severity": "low", "range": "<1.2.6"}
+}}

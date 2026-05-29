@@ -293,3 +293,54 @@ def test_evaluate_audit_config():
     full = evaluate_audit_config([{"service": "allServices", "auditLogConfigs": [
         {"logType": "DATA_READ"}, {"logType": "DATA_WRITE"}]}])
     assert full[0]["status"] == "PASS"
+
+
+# ====================== App-layer scanners (Tier-1) =================== #
+from auditors.idor_probe import evaluate_idor_response
+from auditors.security_headers import evaluate_security_headers
+from config_checks.audit_write_scan import scan_audit_writes
+from integrations.npm_audit import normalize_npm_audit
+
+
+def test_security_headers_strong_vs_missing():
+    strong = {
+        "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+        "Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'",
+        "X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "strict-origin", "Permissions-Policy": "geolocation=()"}
+    res = evaluate_security_headers(strong)
+    assert not any(f["status"] == "FAIL" for f in res)
+    missing = evaluate_security_headers({})
+    assert any(f["status"] == "FAIL" for f in missing)
+
+
+def test_security_headers_unsafe_eval_and_phi_cache():
+    csp = {"Content-Security-Policy": "script-src 'self' 'unsafe-inline' 'unsafe-eval'"}
+    res = evaluate_security_headers(csp, is_phi_path=True)
+    assert any("unsafe-eval" in f["finding"] for f in res if f["status"] == "WARN")
+    assert any(f["status"] == "FAIL" and "no-store" in f["finding"] for f in res)
+
+
+def test_idor_eval():
+    assert evaluate_idor_response(403, "")[0] == "PASS"
+    assert evaluate_idor_response(404, "")[0] == "PASS"
+    s, _ = evaluate_idor_response(200, "patient Bob Smith DOB", "Bob Smith")
+    assert s == "FAIL"
+    assert evaluate_idor_response(200, "{}", "Bob Smith")[0] == "WARN"
+
+
+def test_npm_audit_normalize_v7_and_clean():
+    data = {"vulnerabilities": {
+        "lodash": {"severity": "critical", "range": "<4.17.21"}}}
+    res = normalize_npm_audit(data)
+    assert res[0]["status"] == "FAIL" and res[0]["severity"] == "critical"
+    clean = normalize_npm_audit({"vulnerabilities": {}})
+    assert clean[0]["status"] == "PASS"
+
+
+def test_audit_write_scan_detects_swallowed():
+    src = {"route.ts": "await recordAuditEvent(ctx, 'phi_read').catch(() => {});\n"}
+    res = scan_audit_writes(src)
+    assert any(f["status"] == "FAIL" for f in res)
+    clean = {"ok.ts": "const x = something().catch(() => {});  // not audit\n"}
+    assert scan_audit_writes(clean)[0]["status"] == "PASS"

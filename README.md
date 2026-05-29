@@ -150,6 +150,43 @@ python audit_runner.py --manual-checklist --skip-tls --no-pdf
 Deep TLS: the in-transit scanner now also flags weak negotiated ciphers
 (RC4/3DES/etc.) and certificate expiry, in addition to protocol enumeration.
 
+## Application-layer scanning (DAST/SAST)
+
+Infra checks alone miss where most EMR HIPAA risk lives. These probe the running
+app and its source:
+
+```bash
+# Active HTTP security-header grade (CSP/HSTS/X-Frame/etc.; flags unsafe-inline)
+python audit_runner.py --headers-url https://portal.example.com --skip-tls --no-pdf
+
+# Authenticated IDOR / cross-tenant authorization probe (config-driven)
+python audit_runner.py --idor-config idor.json --skip-tls --no-pdf
+
+# Node dependency vulnerabilities
+python audit_runner.py --npm-audit-file npm-audit.json --skip-tls --no-pdf   # ingest
+python audit_runner.py --npm-audit-dir ./member-app --skip-tls --no-pdf       # live
+
+# Static scan for swallowed audit-log writes (HIPAA audit-trail loss)
+python audit_runner.py --audit-write-scan ./member-app/src --skip-tls --no-pdf
+```
+
+IDOR config shape:
+
+```json
+{
+  "base_url": "https://portal.example.com",
+  "probes": [
+    {"name": "patient B record via A session", "method": "GET",
+     "path": "/api/portal/patients/{victim_id}", "victim_id": "uuid-of-B",
+     "victim_marker": "Bob Smith",
+     "headers": {"Cookie": "next-auth.session-token=<patient-A-session>"}}
+  ]
+}
+```
+
+Tokens/cookies are supplied at runtime and never stored. Run only against
+systems you are authorized to test.
+
 ## CI / security automation
 
 GitHub Actions in `.github/workflows/`:

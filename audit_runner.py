@@ -45,6 +45,16 @@ def build_parser():
                    help="Verify GCP Data Access audit logging is enabled (needs --gcp-project).")
     p.add_argument("--manual-checklist", action="store_true",
                    help="Append reminders for safeguards requiring human verification.")
+    p.add_argument("--headers-url", default=None,
+                   help="Actively grade HTTP security headers of this URL (DAST).")
+    p.add_argument("--idor-config", default=None,
+                   help="JSON config for the authenticated IDOR/authorization probe (DAST).")
+    p.add_argument("--npm-audit-file", default=None,
+                   help="Ingest an existing `npm audit --json` results file.")
+    p.add_argument("--npm-audit-dir", default=None,
+                   help="Run `npm audit` live in this Node project directory.")
+    p.add_argument("--audit-write-scan", default=None,
+                   help="Static scan of a source dir for swallowed audit-log writes (SAST).")
     p.add_argument("--output", default="HIPAA_Compliance_Report.pdf",
                    help="Output path for the generated PDF report.")
     p.add_argument("--json-out", default=None, help="Also write findings as JSON.")
@@ -93,6 +103,29 @@ def run_all(args):
         findings += ProwlerAuditor(
             provider="gcp", project=args.gcp_project,
             results_file=args.prowler_file, run=args.run_prowler).run_audit()
+
+    if args.headers_url:
+        print("[*] HTTP security headers...")
+        from auditors.security_headers import SecurityHeaderAuditor
+        findings += SecurityHeaderAuditor(args.headers_url,
+                                          allow_private=args.allow_private).run_audit()
+
+    if args.idor_config:
+        print("[*] IDOR / authorization probe...")
+        from auditors.idor_probe import IDORAuditor
+        findings += IDORAuditor(config_path=args.idor_config,
+                                allow_private=args.allow_private).run_audit()
+
+    if args.npm_audit_file or args.npm_audit_dir:
+        print("[*] npm dependency audit...")
+        from integrations.npm_audit import NpmAuditAuditor
+        findings += NpmAuditAuditor(project_dir=args.npm_audit_dir,
+                                    results_file=args.npm_audit_file).run_audit()
+
+    if args.audit_write_scan:
+        print("[*] Audit-write reliability scan...")
+        from config_checks.audit_write_scan import AuditWriteScanner
+        findings += AuditWriteScanner(args.audit_write_scan).run_audit()
 
     if args.manual_checklist:
         findings += manual_checklist()

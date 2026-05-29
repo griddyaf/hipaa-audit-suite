@@ -51,6 +51,10 @@ CITATIONS = {
         "45 CFR §164.316(b)(2)(i)",
         "Retention – retain required documentation for six years",
     ),
+    "risk_management": (
+        "45 CFR §164.308(a)(1)(ii)(B)",
+        "Risk Management – reduce risks/vulnerabilities to a reasonable level",
+    ),
     "config_error": (
         "45 CFR §164.308(a)(1)(ii)(A)",
         "Risk Analysis – unable to assess; remediate data/access gap",
