@@ -81,7 +81,10 @@ class AuditLogMonitor:
         if ext in (".log", ".txt"):
             return "syslog"
         stripped = text.lstrip()
-        if stripped.startswith("{") and '"Records"' in stripped[:200]:
+        head = stripped[:400]
+        if "protoPayload" in head or '"logName"' in head:
+            return "gcp_audit"
+        if stripped.startswith("{") and '"Records"' in head:
             return "cloudtrail"
         if stripped.startswith("["):
             return "json"
@@ -99,6 +102,8 @@ class AuditLogMonitor:
         if fmt == "cloudtrail":
             recs = json.loads(text).get("Records", [])
             return [self._normalize_cloudtrail(r) for r in recs]
+        if fmt == "gcp_audit":
+            return [self._normalize_gcp_audit(e) for e in self._load_gcp_entries(text)]
         if fmt == "jsonl":
             out = []
             for line in text.splitlines():
@@ -118,6 +123,37 @@ class AuditLogMonitor:
             "user_id": ident.get("userName") or ident.get("arn") or ident.get("principalId"),
             "action": rec.get("eventName"),
             "resource": rec.get("eventSource"),
+        }
+
+
+    @staticmethod
+    def _load_gcp_entries(text):
+        text = text.strip()
+        if text.startswith("["):
+            return json.loads(text)
+        obj_or_lines = []
+        # support {"entries": [...]} and NDJSON of LogEntry objects
+        if text.startswith("{") and '"entries"' in text[:200]:
+            return json.loads(text).get("entries", [])
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                obj_or_lines.append(json.loads(line))
+        return obj_or_lines
+
+    @staticmethod
+    def _normalize_gcp_audit(entry):
+        proto = entry.get("protoPayload", {}) if isinstance(entry, dict) else {}
+        auth = proto.get("authenticationInfo", {})
+        resource = proto.get("resourceName")
+        if not resource:
+            res = entry.get("resource", {})
+            resource = res.get("type") if isinstance(res, dict) else res
+        return {
+            "timestamp": entry.get("timestamp") or entry.get("receiveTimestamp"),
+            "user_id": auth.get("principalEmail"),
+            "action": proto.get("methodName"),
+            "resource": resource,
         }
 
     @staticmethod

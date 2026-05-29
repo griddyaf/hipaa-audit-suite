@@ -14,6 +14,46 @@ import os
 from hipaa_refs import make_finding, PASS, FAIL, WARN, ERROR
 
 
+def evaluate_mysql_tls(variables, status, label="Database: MySQL"):
+    """Pure evaluation of MySQL TLS posture from server variables/status.
+
+    variables: dict from SHOW VARIABLES (e.g. require_secure_transport, have_ssl,
+               tls_version). status: dict from SHOW STATUS (e.g. Ssl_cipher).
+    Returns a list of findings. Kept pure so it is unit-testable without a DB.
+    """
+    findings = []
+    rst = str(variables.get("require_secure_transport", "")).upper()
+    if rst in ("ON", "1", "YES"):
+        findings.append(make_finding(
+            PASS, label, "Server enforces encrypted transport (require_secure_transport=ON).",
+            "encryption_in_transit"))
+    else:
+        findings.append(make_finding(
+            FAIL, label,
+            "require_secure_transport is OFF; server accepts unencrypted client connections to PHI.",
+            "encryption_in_transit"))
+
+    cipher = status.get("Ssl_cipher") or ""
+    if cipher:
+        findings.append(make_finding(
+            PASS, label, f"Current connection is TLS-encrypted (cipher {cipher}).",
+            "transmission_security"))
+    else:
+        findings.append(make_finding(
+            WARN, label,
+            "Audit connection itself was not TLS-encrypted; verify clients connect with SSL.",
+            "transmission_security"))
+
+    # Cloud SQL encrypts at rest by default; CMEK is the addressable control.
+    findings.append(make_finding(
+        WARN, label,
+        "Cloud SQL encrypts data at rest by default (Google-managed keys). "
+        "Confirm whether customer-managed keys (CMEK) are required by your risk analysis; "
+        "CMEK must be set at instance creation.",
+        "encryption_at_rest"))
+    return findings
+
+
 class DataAtRestAuditor:
     def __init__(self, config_path="mock_data/db_configs.json", live=False):
         self.config_path = config_path
@@ -43,7 +83,7 @@ class DataAtRestAuditor:
                 "Invalid JSON in configuration file", "config_error"))
             return self.findings
 
-        for engine, label in (("postgresql", "PostgreSQL"), ("mongodb", "MongoDB")):
+        for engine, label in (("postgresql", "PostgreSQL"), ("mysql", "MySQL"), ("mongodb", "MongoDB")):
             if engine not in configs:
                 continue
             if configs[engine].get("encryption_at_rest"):
@@ -72,6 +112,8 @@ class DataAtRestAuditor:
                 pass
         if "postgresql" in cfg:
             self._audit_postgres(cfg["postgresql"])
+        if "mysql" in cfg:
+            self._audit_mysql(cfg["mysql"])
         if "mongodb" in cfg:
             self._audit_mongodb(cfg["mongodb"])
         if not self.findings:
@@ -120,6 +162,44 @@ class DataAtRestAuditor:
                 "Encryption-at-rest (volume/TDE) cannot be verified in-band; "
                 "confirm disk/volume encryption at the infrastructure layer.",
                 "encryption_at_rest"))
+        finally:
+            c.close()
+
+    def _audit_mysql(self, conn):
+        label = "Database: MySQL"
+        try:
+            import pymysql  # lazy
+        except ImportError:
+            self.findings.append(make_finding(
+                ERROR, label, "PyMySQL not installed; cannot run live check.", "config_error"))
+            return
+        try:
+            ssl_arg = {"ssl": {}} if conn.get("ssl", True) else {}
+            c = pymysql.connect(
+                host=conn.get("host", "localhost"),
+                port=int(conn.get("port", 3306)),
+                user=conn.get("user"),
+                password=conn.get("password"),
+                database=conn.get("database"),
+                connect_timeout=conn.get("timeout", 5),
+                **ssl_arg,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.findings.append(make_finding(
+                ERROR, label, f"Connection failed: {exc}", "config_error"))
+            return
+        try:
+            cur = c.cursor()
+            variables = {}
+            for var in ("require_secure_transport", "have_ssl", "tls_version"):
+                cur.execute("SHOW VARIABLES LIKE %s;", (var,))
+                row = cur.fetchone()
+                if row:
+                    variables[row[0]] = row[1]
+            cur.execute("SHOW STATUS LIKE 'Ssl_cipher';")
+            row = cur.fetchone()
+            status = {row[0]: row[1]} if row else {}
+            self.findings.extend(evaluate_mysql_tls(variables, status, label))
         finally:
             c.close()
 

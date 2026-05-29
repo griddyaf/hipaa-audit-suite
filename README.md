@@ -15,9 +15,10 @@ for demos/CI) or a **live** mode that connects to real infrastructure.
 
 | Module | Mock | Live |
 |---|---|---|
-| Data at Rest (`auditors/data_at_rest.py`) | reads DB config JSON | connects to PostgreSQL/MongoDB and inspects SSL + encryption settings |
-| Data in Transit (`auditors/data_in_transit.py`) | n/a | enumerates accepted TLS protocols against an endpoint (flags TLS 1.0/1.1) |
-| Audit Controls (`log_monitors/audit_logger.py`) | sample JSON logs | ingests JSON / JSONL / AWS CloudTrail / syslog |
+| Data at Rest (`auditors/data_at_rest.py`) | reads DB config JSON | connects to PostgreSQL / **MySQL (Cloud SQL)** / MongoDB and inspects SSL + encryption settings |
+| Data in Transit (`auditors/data_in_transit.py`) | n/a | enumerates accepted TLS protocols (flags TLS 1.0/1.1); **detects Cloudflare edge** |
+| Cloudflare zone (`config_checks/cloudflare_check.py`) | n/a | checks SSL mode (Full strict), min TLS, Always Use HTTPS, HSTS via Cloudflare API |
+| Audit Controls (`log_monitors/audit_logger.py`) | sample JSON logs | ingests JSON / JSONL / **GCP Cloud Audit Logs** / AWS CloudTrail / syslog |
 | Access Control (`config_checks/access_control.py`) | role→permission JSON | pulls live **GCP** IAM policy and flags primitive roles + public members |
 | Report (`compliance_reports/report_generator.py`) | — | PDF via ReportLab, with HIPAA citations per finding |
 
@@ -80,6 +81,41 @@ Environment knobs: `FLASK_DEBUG`, `AUDIT_HOST`, `AUDIT_PORT`, `AUDIT_DATA_ROOT`
 (restricts which files the API may read), `AUDIT_ALLOW_PRIVATE`. Debug is **off**
 by default and config-file inputs are confined to `AUDIT_DATA_ROOT` to prevent
 path traversal; target URLs are validated to prevent SSRF.
+
+## Target stack notes (GCP + Cloud SQL MySQL + Cloudflare)
+
+This suite includes checks tailored to a GCP-hosted app using Cloud SQL for
+MySQL behind Cloudflare DNS:
+
+**Cloud SQL MySQL.** Put connection params under a `mysql` key in `--db-config`
+and run `--live-db`. The auditor checks `require_secure_transport`, the active
+connection cipher, and `have_ssl`/`tls_version`. Note Cloud SQL **encrypts at
+rest by default** (Google-managed keys), so the suite does not fail on at-rest;
+instead it flags a reminder to confirm whether **CMEK** is required (CMEK must be
+set at instance creation).
+
+```bash
+python audit_runner.py --live-db --db-config cloudsql.json --skip-tls
+# cloudsql.json: {"mysql": {"host": "...", "user": "...", "password": "...", "database": "...", "ssl": true}}
+```
+
+**Cloudflare.** A public TLS scan only tests the Cloudflare **edge**, not the
+GCP origin. The TLS scanner detects Cloudflare and warns accordingly. Audit the
+zone directly:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...        # Zone -> SSL and Certificates: Read
+python audit_runner.py --cloudflare-zone <ZONE_ID> --skip-tls
+```
+
+It verifies SSL/TLS mode is **Full (strict)**, minimum TLS >= 1.2, Always Use
+HTTPS, and HSTS.
+
+**GCP Cloud Audit Logs.** Export Data Access logs from Cloud Logging and run:
+
+```bash
+python audit_runner.py --log-file audit_logs.json --log-format gcp_audit --skip-tls
+```
 
 ## Tests
 

@@ -8,6 +8,7 @@ could never negotiate a weak version.
 
 Uses only the standard library, so there are no fragile third-party pins.
 """
+import http.client
 import socket
 import ssl
 import warnings
@@ -24,6 +25,16 @@ _PROTOCOLS = [
     ("TLSv1.0", getattr(ssl.TLSVersion, "TLSv1", None)),
 ]
 _WEAK = {"TLSv1.0", "TLSv1.1"}
+
+
+def detect_cloudflare(headers):
+    """Return True if response headers indicate the endpoint is fronted by Cloudflare."""
+    if not headers:
+        return False
+    lowered = {str(k).lower(): str(v).lower() for k, v in headers.items()}
+    if "cf-ray" in lowered or "cf-cache-status" in lowered:
+        return True
+    return "cloudflare" in lowered.get("server", "")
 
 
 class DataInTransitAuditor:
@@ -57,6 +68,21 @@ class DataInTransitAuditor:
                     return True, ss.cipher()[0], None
         except (ssl.SSLError, OSError) as exc:
             return False, None, str(exc)
+
+
+    def _fetch_headers(self, host, port):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        try:
+            conn = http.client.HTTPSConnection(host, port, timeout=self.timeout, context=ctx)
+            conn.request("HEAD", "/")
+            resp = conn.getresponse()
+            headers = dict(resp.getheaders())
+            conn.close()
+            return headers
+        except Exception:  # noqa: BLE001
+            return {}
 
     def run_audit(self):
         host, port = self._resolve()
@@ -109,6 +135,14 @@ class DataInTransitAuditor:
             self.findings.append(make_finding(
                 PASS, f"Endpoint: {host}",
                 "No deprecated TLS protocols accepted.", "transmission_security"))
+
+        if detect_cloudflare(self._fetch_headers(host, port)):
+            self.findings.append(make_finding(
+                WARN, f"Endpoint: {host}",
+                "Endpoint is fronted by Cloudflare: this TLS result reflects the Cloudflare "
+                "EDGE, not the GCP origin. Verify the Cloudflare->origin hop separately "
+                "(SSL/TLS mode should be 'Full (strict)') and run the Cloudflare API auditor.",
+                "transmission_security"))
         return self.findings
 
 

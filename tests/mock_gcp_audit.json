@@ -1,0 +1,4 @@
+[
+  {"timestamp":"2026-05-28T10:00:00Z","protoPayload":{"authenticationInfo":{"principalEmail":"alice@example.com"},"methodName":"cloudsql.instances.get","resourceName":"projects/p/instances/db1"}},
+  {"timestamp":"2026-05-28T10:05:00Z","protoPayload":{"authenticationInfo":{},"methodName":"cloudsql.instances.list","resourceName":"projects/p/instances"}}
+]

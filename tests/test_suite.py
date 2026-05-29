@@ -165,3 +165,53 @@ def test_tls_scan_local_server_strong(tls12_server):
     statuses = [f["status"] for f in findings]
     assert "PASS" in statuses
     assert "FAIL" not in statuses  # TLS 1.2 only -> no weak-protocol failures
+
+
+# ====================== Cloud SQL MySQL + Cloudflare + GCP ============= #
+from auditors.data_at_rest import evaluate_mysql_tls
+from auditors.data_in_transit import detect_cloudflare
+from config_checks.cloudflare_check import evaluate_cloudflare_settings
+
+
+def test_mysql_eval_requires_secure_transport():
+    on = evaluate_mysql_tls({"require_secure_transport": "ON"}, {"Ssl_cipher": "TLS_AES_256"})
+    assert any(f["status"] == "PASS" and "require_secure_transport" in f["finding"] for f in on)
+    off = evaluate_mysql_tls({"require_secure_transport": "OFF"}, {})
+    assert any(f["status"] == "FAIL" for f in off)
+    # CMEK-at-rest reminder always present
+    assert any("CMEK" in f["finding"] for f in off)
+
+
+def test_mysql_eval_unencrypted_connection_warns():
+    res = evaluate_mysql_tls({"require_secure_transport": "ON"}, {"Ssl_cipher": ""})
+    assert any(f["status"] == "WARN" and "not TLS-encrypted" in f["finding"] for f in res)
+
+
+def test_detect_cloudflare():
+    assert detect_cloudflare({"CF-RAY": "abc-LAX"}) is True
+    assert detect_cloudflare({"Server": "cloudflare"}) is True
+    assert detect_cloudflare({"Server": "gunicorn"}) is False
+    assert detect_cloudflare({}) is False
+
+
+def test_cloudflare_settings_eval():
+    strict = evaluate_cloudflare_settings("strict", "1.2", "on", True)
+    assert all(f["status"] == "PASS" for f in strict)
+    flexible = evaluate_cloudflare_settings("flexible", "1.1", "off", False)
+    statuses = [f["status"] for f in flexible]
+    assert "FAIL" in statuses  # flexible mode + TLS 1.1
+    assert statuses.count("FAIL") >= 2
+    full = evaluate_cloudflare_settings("full", "1.2", "on", True)
+    assert any(f["status"] == "WARN" and "not strict" in f["finding"] for f in full)
+
+
+def test_gcp_audit_log_ingestion():
+    findings = AuditLogMonitor(os.path.join(HERE, "mock_gcp_audit.json")).run_audit()
+    # second entry has no principalEmail -> user_id missing -> FAIL
+    assert any(f["status"] == "FAIL" and "user_id" in f["finding"] for f in findings)
+
+
+def test_mysql_mock_mode_pass():
+    findings = DataAtRestAuditor(os.path.join(MOCK, "db_configs.json")).run_audit()
+    by = {f["component"]: f["status"] for f in findings}
+    assert by["Database: MySQL"] == "PASS"

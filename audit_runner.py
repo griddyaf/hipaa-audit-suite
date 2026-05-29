@@ -25,7 +25,7 @@ def build_parser():
     p.add_argument("--log-file", default="mock_data/sample_logs.json",
                    help="Path to application access logs.")
     p.add_argument("--log-format", default="auto",
-                   choices=["auto", "json", "jsonl", "cloudtrail", "syslog"],
+                   choices=["auto", "json", "jsonl", "cloudtrail", "gcp_audit", "syslog"],
                    help="Log format (default auto-detect).")
     p.add_argument("--iam-config", default="mock_data/sample_iam.json",
                    help="Path to IAM roles JSON (file mode).")
@@ -33,6 +33,8 @@ def build_parser():
                    help="Access-control source: local file or live GCP IAM.")
     p.add_argument("--gcp-project", default=None,
                    help="GCP project ID (required when --iam-mode gcp).")
+    p.add_argument("--cloudflare-zone", default=None,
+                   help="Cloudflare zone ID to audit (token via CLOUDFLARE_API_TOKEN env).")
     p.add_argument("--output", default="HIPAA_Compliance_Report.pdf",
                    help="Output path for the generated PDF report.")
     p.add_argument("--skip-tls", action="store_true", help="Skip the TLS scan.")
@@ -55,6 +57,11 @@ def run_all(args):
     print(f"[*] Access Control ({args.iam_mode})...")
     findings += AccessControlAuditor(
         args.iam_config, mode=args.iam_mode, project_id=args.gcp_project).run_audit()
+
+    if args.cloudflare_zone:
+        print("[*] Cloudflare zone settings...")
+        from config_checks.cloudflare_check import CloudflareAuditor
+        findings += CloudflareAuditor(args.cloudflare_zone).run_audit()
     return findings
 
 

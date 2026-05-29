@@ -11,5 +11,12 @@
         "port": 27017,
         "database": "patient_data",
         "encryption_at_rest": false
+    },
+    "mysql": {
+        "host": "localhost",
+        "port": 3306,
+        "database": "health_records",
+        "encryption_at_rest": true,
+        "require_secure_transport": "ON"
     }
 }
