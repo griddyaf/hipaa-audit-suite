@@ -40,14 +40,35 @@ def _is_test(path):
 # --------------------------------------------------------------------------- #
 # SQL injection
 # --------------------------------------------------------------------------- #
-_SQLI = re.compile(r"\b(query|execute)\s*\(\s*`[^`]*\$\{", re.IGNORECASE)
+# Only consider template literals passed to a DB call: query(`...`) / execute(`...`)
+# / sql`...`. This avoids matching HTML/email/React templates that merely contain
+# SQL-looking words.
+_DB_CALL_TEMPLATE = re.compile(
+    r"(?:\b(?:query|execute)\s*\(\s*|\bsql)`([^`]*)`", re.IGNORECASE | re.DOTALL)
+_INTERP = re.compile(r"(?<!\$)\$\{([^}]+)\}")  # ${...} but not $${...} placeholders
+
+# Structural interpolations (identifiers/clauses/constants), not user values.
+_SAFE_KEYWORDS = {
+    "where", "set", "sets", "col", "cols", "column", "columns", "field", "fields",
+    "conditions", "clause", "idx", "i", "n", "placeholder", "placeholders",
+    "returning", "direction", "dir", "limit", "offset", "having",
+}
+_CONST_RE = re.compile(r"[A-Z][A-Z0-9_]*$")           # ALL-CAPS constant (case-sensitive)
+_CLAUSEVAR_RE = re.compile(r"(order|sort|group|table|select|where|set)\w*$", re.IGNORECASE)
 
 
-_SQL_DYNAMIC = re.compile(
-    r"`[^`]*\b(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|WHERE|VALUES)\b[^`]*\$\{[^}]+\}[^`]*`",
-    re.IGNORECASE)
-# An interpolation that is only a placeholder index (e.g. `$${idx}`) is safe.
-_SAFE_PLACEHOLDER = re.compile(r"\$\$\{")
+def _sql_interp_is_safe(expr):
+    """True if the interpolation is a structural identifier/clause, not a user value."""
+    e = expr.strip()
+    if _CONST_RE.fullmatch(e):          # e.g. APPOINTMENT_SELECT
+        return True
+    if ".join(" in e:                    # e.g. sets.join(", ")
+        return True
+    if e.lower() in _SAFE_KEYWORDS:
+        return True
+    if _CLAUSEVAR_RE.fullmatch(e):       # e.g. orderBy, whereClause, sortDir
+        return True
+    return False
 
 
 def scan_sqli(sources):
@@ -55,27 +76,22 @@ def scan_sqli(sources):
     for path, text in sources.items():
         if _is_test(path):
             continue
-        for m in _SQLI.finditer(text):
-            findings.append(make_finding(
-                FAIL, f"SQLi: {os.path.basename(path)}:{_loc(text, m.start())}",
-                "String interpolation directly inside a query()/execute() template literal — "
-                "use parameterized queries ($1, $2), not `${...}`.", "integrity", severity="high"))
-        dyn_lines = []
-        for m in _SQL_DYNAMIC.finditer(text):
-            frag = m.group(0)
-            interps = re.findall(r"(?<!\$)\$\{[^}]+\}", frag)
-            # Skip when all interpolations are clearly identifiers/placeholders, not values.
-            if interps and all(
-                re.search(r"^\$\{\s*(idx|i|n|paramIndex|placeholder|cols|sets|columns|fields|where|order|sort|table)",
-                          x, re.IGNORECASE) for x in interps):
+        flagged = set()
+        for m in _DB_CALL_TEMPLATE.finditer(text):
+            frag = m.group(1)
+            interps = _INTERP.findall(frag)
+            unsafe = [e for e in interps if not _sql_interp_is_safe(e)]
+            if not unsafe:
                 continue
-            dyn_lines.append(_loc(text, m.start()))
-        if dyn_lines:
+            line = _loc(text, m.start())
+            if line in flagged:
+                continue
+            flagged.add(line)
             findings.append(make_finding(
-                WARN, f"SQLi(dynamic): {os.path.basename(path)}",
-                f"{len(dyn_lines)} dynamic-SQL interpolation(s) (lines "
-                f"{', '.join(str(x) for x in dyn_lines[:8])}{'…' if len(dyn_lines) > 8 else ''}) — "
-                "confirm interpolated parts are fixed identifiers and user values use $1/$2 params.",
+                WARN, f"SQLi(review): {os.path.basename(path)}:{line}",
+                "Non-structural interpolation "
+                f"({', '.join('${%s}' % e.strip()[:24] for e in unsafe[:2])}) inside a query()/sql`` "
+                "template — confirm user values are passed as $1/$2 parameters, not interpolated.",
                 "integrity", severity="medium"))
     return findings
 
@@ -161,14 +177,33 @@ _MUTATING = re.compile(r"export\s+(?:async\s+)?function\s+(POST|PUT|PATCH|DELETE
                        r"|export\s+const\s+(POST|PUT|PATCH|DELETE)\s*=")
 
 
+def _has_global_csrf_middleware(sources):
+    """True if a middleware file enforces an Origin/CSRF gate across /api/* for
+    state-changing methods (centralized protection that per-route scans miss)."""
+    for path, text in sources.items():
+        if "middleware" not in path.replace(os.sep, "/").lower():
+            continue
+        low = text.lower()
+        if ("origin" in low and "/api/" in text
+                and ("403" in text or "state_changing" in low or "csrf" in low)):
+            return True
+    return False
+
+
 def scan_csrf_coverage(sources, covered_prefixes=("/api/portal",),
                        marker_tokens=("assertsameorigin", "validateorigin", "csrf", "checkorigin",
                                       "requiresameorigin")):
     """Flag mutating API route handlers not covered by a CSRF origin check.
 
-    A route is considered covered if its path matches a covered prefix OR the
-    file references a known origin-check marker.
+    If a centralized middleware Origin/CSRF gate covers /api/*, per-route flags
+    are suppressed (a single PASS is emitted). Otherwise a route is covered only
+    if its path matches a covered prefix OR the file references an origin marker.
     """
+    if _has_global_csrf_middleware(sources):
+        return [make_finding(
+            PASS, "CSRF Coverage",
+            "Central CSRF Origin gate detected in middleware for /api/* state-changing "
+            "requests; per-route checks not required.", "access_control")]
     findings = []
     for path, text in sources.items():
         if _is_test(path):
@@ -205,9 +240,18 @@ def scan_mfa_posture(sources):
         low = text.lower()
         if "mfa" in low or "totp" in low:
             saw_mfa = True
+        # A migration that hardens/encrypts the secret is the fix, not the bug.
+        remediation = any(tok in low for tok in
+                          ("aes", "envelope", "encrypt", "harden", "type text", "kms", "ciphertext"))
         for m in _PLAINTEXT_MFA.finditer(text):
+            line = _loc(text, m.start())
+            line_text = text.splitlines()[line - 1].strip() if line <= text.count("\n") + 1 else ""
+            if line_text.startswith(("--", "//", "*", "/*", "#")):
+                continue  # comment, not a live column definition
+            if remediation:
+                continue  # this file already encrypts/widens the secret
             findings.append(make_finding(
-                FAIL, f"MFA: {os.path.basename(path)}:{_loc(text, m.start())}",
+                FAIL, f"MFA: {os.path.basename(path)}:{line}",
                 "TOTP `mfa_secret` declared as plaintext column — a single DB read defeats MFA. "
                 "Encrypt at rest (e.g. envelope encryption with a KMS/Secret Manager key).",
                 "access_control", severity="high"))

@@ -18,10 +18,16 @@ def scan_audit_writes(sources):
     """Pure: {path: text} -> findings. Flags swallowed audit-write failures."""
     findings = []
     for path, text in sources.items():
+        np = path.replace(os.sep, "/").lower()
+        if any(t in np for t in ("__tests__", "/e2e/", "/tests/", ".test.", ".spec.")):
+            continue
         for m in _EMPTY_CATCH.finditer(text):
             window = text[max(0, m.start() - 220):m.start()].lower()
             if any(tok in window for tok in _AUDIT_TOKENS):
                 line = text.count("\n", 0, m.start()) + 1
+                line_text = text.splitlines()[line - 1].strip() if line <= text.count("\n") + 1 else ""
+                if line_text.startswith(("//", "*", "/*", "--", "#")):
+                    continue  # match is inside a comment, not live code
                 findings.append(make_finding(
                     FAIL, f"Audit write: {os.path.basename(path)}:{line}",
                     "Audit-log write failure is silently swallowed (empty .catch); "

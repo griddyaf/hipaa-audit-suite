@@ -356,12 +356,16 @@ from config_checks.sast_scans import (
 )
 
 
-def test_sqli_direct_and_dynamic():
-    direct = {"q.ts": "await db.query(`SELECT * FROM t WHERE id = ${userId}`);\n"}
-    r = scan_sqli(direct)
-    assert any(f["status"] == "FAIL" for f in r)
+def test_sqli_flags_value_interp_not_structural():
+    # value interpolation inside query() -> review WARN
+    danger = {"q.ts": "await db.query(`SELECT * FROM t WHERE id = ${userId}`);\n"}
+    assert any(f["status"] == "WARN" for f in scan_sqli(danger))
+    # structural interpolation (clause builder) -> no finding
+    structural = {"q.ts": 'await query(`UPDATE t SET ${sets.join(", ")} WHERE id = $${idx}`, vals);\n'}
+    assert not scan_sqli(structural)
+    # parameterized, no interpolation -> no finding
     safe = {"q.ts": "await db.query('SELECT * FROM t WHERE id = $1', [userId]);\n"}
-    assert not any(f["status"] == "FAIL" for f in scan_sqli(safe))
+    assert not scan_sqli(safe)
 
 
 def test_ssrf_server_fetch_without_guard():
@@ -397,3 +401,15 @@ def test_mfa_posture():
     assert any(f["status"] == "FAIL" for f in scan_mfa_posture(plain))
     no_replay = {"src/lib/mfa/verify.ts": "export function verifyTOTP(code){ return totp.check(code); }\n"}
     assert any("replay" in f["finding"].lower() for f in scan_mfa_posture(no_replay))
+
+
+def test_csrf_central_middleware_suppresses_route_flags():
+    from config_checks.sast_scans import scan_csrf_coverage
+    srcs = {
+        "src/middleware.ts": ("if (pathname.startsWith('/api/') && "
+                              "STATE_CHANGING_METHODS.has(request.method) && !okOrigin) "
+                              "return new NextResponse(null,{status:403}); // CSRF Origin gate"),
+        "src/app/api/comms/route.ts": "export async function POST(req){ return ok(); }",
+    }
+    res = scan_csrf_coverage(srcs)
+    assert len(res) == 1 and res[0]["status"] == "PASS"

@@ -110,9 +110,26 @@ class DataInTransitAuditor:
             return {}
 
     def _cert_not_after(self, host, port):
-        """Return the certificate notAfter as a unix epoch, or None."""
+        """Return the certificate notAfter as a unix epoch, or None.
+
+        Preferred path uses only the standard library: a verified handshake
+        exposes getpeercert()['notAfter'] for any publicly-trusted cert (the
+        common case). Falls back to an unverified handshake parsed with the
+        optional `cryptography` lib for self-signed/untrusted certs.
+        """
+        # 1) stdlib verified handshake (no third-party deps required)
         try:
-            from cryptography import x509  # lazy
+            ctx = ssl.create_default_context()
+            with socket.create_connection((host, port), timeout=self.timeout) as sock:
+                with ctx.wrap_socket(sock, server_hostname=host) as ss:
+                    cert = ss.getpeercert()
+            if cert and cert.get("notAfter"):
+                return ssl.cert_time_to_seconds(cert["notAfter"])
+        except Exception:  # noqa: BLE001,S110 (best-effort; fall through to next method)
+            pass
+        # 2) fallback: unverified handshake + cryptography (optional dep)
+        try:
+            from cryptography import x509  # lazy/optional
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
@@ -122,7 +139,7 @@ class DataInTransitAuditor:
             cert = x509.load_der_x509_certificate(der)
             try:
                 return cert.not_valid_after_utc.timestamp()
-            except AttributeError:  # older cryptography
+            except AttributeError:
                 return cert.not_valid_after.timestamp()
         except Exception:  # noqa: BLE001
             return None

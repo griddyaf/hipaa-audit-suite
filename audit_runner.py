@@ -64,25 +64,31 @@ def build_parser():
                    help="Also write findings as SARIF 2.1.0 (for GitHub code-scanning).")
     p.add_argument("--no-pdf", action="store_true", help="Skip PDF generation.")
     p.add_argument("--skip-tls", action="store_true", help="Skip the TLS scan.")
+    p.add_argument("--server-only", action="store_true",
+                   help="Only run checks explicitly pointed at a live target/source; "
+                        "skip the bundled offline mock auditors (DB/logs/file-IAM).")
     return p
 
 
 def run_all(args):
     findings = []
-    print("[*] Data at Rest...")
-    findings += DataAtRestAuditor(args.db_config, live=args.live_db).run_audit()
+    if args.live_db or not args.server_only:
+        print("[*] Data at Rest...")
+        findings += DataAtRestAuditor(args.db_config, live=args.live_db).run_audit()
 
     if not args.skip_tls:
         print(f"[*] Data in Transit against {args.target_url}...")
         findings += DataInTransitAuditor(
             args.target_url, allow_private=args.allow_private).run_audit()
 
-    print("[*] Audit Controls (logs)...")
-    findings += AuditLogMonitor(args.log_file, fmt=args.log_format).run_audit()
+    if not args.server_only:
+        print("[*] Audit Controls (logs)...")
+        findings += AuditLogMonitor(args.log_file, fmt=args.log_format).run_audit()
 
-    print(f"[*] Access Control ({args.iam_mode})...")
-    findings += AccessControlAuditor(
-        args.iam_config, mode=args.iam_mode, project_id=args.gcp_project).run_audit()
+    if args.iam_mode == "gcp" or not args.server_only:
+        print(f"[*] Access Control ({args.iam_mode})...")
+        findings += AccessControlAuditor(
+            args.iam_config, mode=args.iam_mode, project_id=args.gcp_project).run_audit()
 
     if args.cloudflare_zone:
         print("[*] Cloudflare zone settings...")
