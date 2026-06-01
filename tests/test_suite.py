@@ -413,3 +413,10 @@ def test_csrf_central_middleware_suppresses_route_flags():
     }
     res = scan_csrf_coverage(srcs)
     assert len(res) == 1 and res[0]["status"] == "PASS"
+
+
+def test_idor_expect_deny_vertical():
+    from auditors.idor_probe import evaluate_idor_response
+    assert evaluate_idor_response(403, "", expect_deny=True)[0] == "PASS"
+    assert evaluate_idor_response(200, "{...}", expect_deny=True)[0] == "FAIL"
+    assert evaluate_idor_response(500, "", expect_deny=True)[0] == "WARN"

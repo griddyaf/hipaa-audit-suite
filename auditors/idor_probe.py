@@ -19,10 +19,32 @@ from hipaa_refs import ERROR, FAIL, PASS, WARN, make_finding
 _DENY_CODES = {401, 403, 404}
 
 
-def evaluate_idor_response(status_code, body, victim_marker=None):
-    """Pure: classify a probe response. Returns (status, message)."""
+def evaluate_idor_response(status_code, body, victim_marker=None, expect_deny=False,
+                           expect_ok=False):
+    """Pure: classify a probe response. Returns (status, message).
+
+    expect_deny=True  -> privileged endpoint should reject (any 2xx = FAIL).
+    expect_ok=True     -> control probe: the session SHOULD reach its own data
+                          (2xx = PASS confirming the session is live; a denial = FAIL
+                          meaning the session never authenticated, so a deny-test is
+                          inconclusive).
+    """
+    if expect_ok:
+        if 200 <= (status_code or 0) < 300:
+            return PASS, (f"Control OK (HTTP {status_code}): the session is authenticated, "
+                          "so denial results in this run are meaningful.")
+        if status_code in _DENY_CODES:
+            return FAIL, (f"Control FAILED (HTTP {status_code}): the session could not reach "
+                          "its OWN data — the cookie likely isn't authenticating, so the "
+                          "deny-probes below are INCONCLUSIVE (they may be plain 401s, not authz).")
+        return WARN, f"Control returned HTTP {status_code}; expected 2xx — review."
     if status_code in _DENY_CODES:
         return PASS, f"Access correctly denied (HTTP {status_code})."
+    if expect_deny:
+        if 200 <= (status_code or 0) < 300:
+            return FAIL, (f"Privilege escalation: lower-privilege session received HTTP "
+                          f"{status_code} from a privileged endpoint (expected 401/403/404).")
+        return WARN, f"Unexpected response (HTTP {status_code}); expected denial — review."
     if status_code == 200:
         if victim_marker and victim_marker in (body or ""):
             return FAIL, ("Cross-tenant data exposed: attacker principal read the victim "
@@ -76,16 +98,21 @@ class IDORAuditor:
                     ERROR, "IDOR Probe", f"Target rejected by safety check: {exc}",
                     "access_control"))
                 return self.findings
+        base_headers = cfg.get("headers", {})  # applied to every probe (e.g. session cookie)
         for probe in cfg.get("probes", []):
             name = probe.get("name", "probe")
             path = probe.get("path", "").replace("{victim_id}", probe.get("victim_id", ""))
             url = base + path if path.startswith("/") else path
-            code, body = self._request(probe.get("method", "GET"), url, probe.get("headers"))
+            headers = {**base_headers, **probe.get("headers", {})}
+            code, body = self._request(probe.get("method", "GET"), url, headers)
             if code is None:
                 self.findings.append(make_finding(
                     ERROR, f"IDOR: {name}", f"Request failed: {body}", "access_control"))
                 continue
-            status, msg = evaluate_idor_response(code, body, probe.get("victim_marker"))
+            status, msg = evaluate_idor_response(
+                code, body, probe.get("victim_marker"),
+                expect_deny=probe.get("expect_deny", False),
+                expect_ok=probe.get("expect_ok", False))
             sev = "critical" if status == FAIL else None
             self.findings.append(make_finding(status, f"IDOR: {name}", msg,
                                                "access_control", severity=sev))
