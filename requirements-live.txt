@@ -9,4 +9,4 @@ pymongo==4.7.2
 # GCP IAM + Storage live checks
 google-cloud-storage==2.16.0
 google-cloud-resource-manager==1.12.5
-google-auth==2.29.0
+google-auth==2.53.0
